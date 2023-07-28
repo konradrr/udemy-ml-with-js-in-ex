@@ -43,12 +43,16 @@ defmodule ML.LinearRegression.Processor do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def load_cars_data() do
+  def load_cars_data do
     GenServer.call(__MODULE__, :load_data)
   end
 
-  def train() do
+  def train do
     GenServer.cast(__MODULE__, :train)
+  end
+
+  def test do
+    GenServer.call(__MODULE__, :test)
   end
 
   # Server
@@ -98,6 +102,31 @@ defmodule ML.LinearRegression.Processor do
       {:error, error} ->
         {:reply, error, state}
     end
+  end
+
+  def handle_call(:test, _from, %State{} = state) do
+    %{test_features: test_features, test_labels: test_labels, weights: weights} = state
+
+    predictions = Nx.dot(test_features, weights)
+
+    # SSres
+    res =
+      Nx.subtract(test_labels, predictions)
+      |> Nx.pow(2)
+      |> Nx.sum()
+      |> Nx.to_number()
+
+    # SStot
+    tot =
+      Nx.subtract(test_labels, Nx.mean(test_labels))
+      |> Nx.pow(2)
+      |> Nx.sum()
+      |> Nx.to_number()
+
+    # Coefficient of Determination
+    r = 1 - res / tot
+
+    {:reply, r, state}
   end
 
   @impl true
@@ -216,12 +245,17 @@ defmodule ML.LinearRegression.Processor do
     )
   end
 
-  def process_features(%State{features: features} = state) do
+  def process_features(%State{} = state) do
     state
-    |> Map.update(:features, features, fn features ->
+    |> Map.update(:features, state.features, fn features ->
       ones = Nx.broadcast(1, {Nx.shape(features) |> elem(0), 1})
 
       Nx.concatenate([ones, features], axis: 1)
+    end)
+    |> Map.update(:test_features, state.test_features, fn test_features ->
+      ones = Nx.broadcast(1, {Nx.shape(test_features) |> elem(0), 1})
+
+      Nx.concatenate([ones, test_features], axis: 1)
     end)
   end
 
