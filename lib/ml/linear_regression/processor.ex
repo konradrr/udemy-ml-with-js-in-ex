@@ -59,19 +59,20 @@ defmodule ML.LinearRegression.Processor do
 
   @impl true
   def handle_call(:load_data, _from, %State{} = state) do
-    {features, labels, test_features, test_labels} = CsvLoader.load_cars_csv_file(state.test_size)
+    case CsvLoader.load_cars_csv_file(state.test_size) do
+      {:ok, {features, labels, test_features, test_labels}} ->
+        state
+        |> Map.put(:features, Nx.tensor(features))
+        |> Map.put(:labels, Nx.tensor(labels))
+        |> Map.put(:test_features, Nx.tensor(test_features))
+        |> Map.put(:test_labels, Nx.tensor(test_labels))
+        |> then(&{:reply, "Loaded data for #{&1.features.shape |> elem(1)} features", &1})
 
-    state =
-      state
-      |> Map.put(:features, Nx.tensor(features))
-      |> Map.put(:labels, Nx.tensor(labels))
-      |> Map.put(:test_features, Nx.tensor(test_features))
-      |> Map.put(:test_labels, Nx.tensor(test_labels))
-
-    {:reply, "loaded", state}
+      {:error, error} ->
+        {:reply, error, state}
+    end
   end
 end
 
 # {:ok, pid} = LRProcessor.start_link()
-
-# LR
+# LRProcessor.load_cars_data(LRProcessor)

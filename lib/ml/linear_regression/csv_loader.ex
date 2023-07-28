@@ -11,7 +11,6 @@ defmodule ML.LinearRegression.CsvLoader do
   def load_cars_csv_file(test_size) do
     root_path = Path.expand(".")
     file_path = Path.join([root_path, "data", "cars.csv"])
-    dbg(file_path)
     # test_size = Keyword.get(opts, :test_size)
 
     # columns_struct = [
@@ -57,7 +56,7 @@ defmodule ML.LinearRegression.CsvLoader do
       test_features = test_data |> Enum.map(&elem(&1, 0))
       test_labels = test_data |> Enum.map(&elem(&1, 1))
 
-      {features, labels, test_features, test_labels}
+      {:ok, {features, labels, test_features, test_labels}}
     else
       {:error, "File doesn't exist!"}
     end
