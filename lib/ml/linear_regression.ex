@@ -1,4 +1,4 @@
-defmodule ML.LinearRegression.Processor do
+defmodule ML.LinearRegression do
   use GenServer
 
   alias ML.LinearRegression.CsvLoader
@@ -55,6 +55,15 @@ defmodule ML.LinearRegression.Processor do
     GenServer.call(__MODULE__, :test)
   end
 
+  @doc """
+  Predict MPG for the given features. It accepts a list of list of the following features:
+  `[horsepower, cylinders, weight, displacement, modelyear]`
+  """
+  @spec predict([[number]]) :: list
+  def predict(features) do
+    GenServer.call(__MODULE__, {:predict, features})
+  end
+
   # Server
 
   @impl true
@@ -94,7 +103,7 @@ defmodule ML.LinearRegression.Processor do
         |> Map.put(:test_features, Nx.tensor(test_features))
         |> Map.put(:test_labels, Nx.tensor(test_labels))
         |> maybe_standardize_features()
-        |> process_features()
+        |> adjust_features()
         |> set_weights()
         |> tap(&Logger.info("Loaded data for #{&1.features.shape |> elem(1)} features"))
         |> then(&{:reply, nil, &1})
@@ -129,6 +138,16 @@ defmodule ML.LinearRegression.Processor do
     {:reply, r, state}
   end
 
+  def handle_call({:predict, features}, _from, %State{} = state) do
+    features
+    |> Nx.tensor()
+    |> standardize(state.mean, state.std_dev)
+    |> process_features()
+    |> Nx.dot(state.weights)
+    |> Nx.to_list()
+    |> then(&{:reply, &1, state})
+  end
+
   @impl true
   def handle_cast(:train, %State{} = state) do
     state
@@ -151,10 +170,7 @@ defmodule ML.LinearRegression.Processor do
       training_iteration: training_iteration
     } = state
 
-    dbg(weights)
     weights = gradient_descent(features, weights, labels, learning_rate)
-    dbg(training_iteration)
-    dbg(weights)
     mse_history = [calculate_mse(features, weights, labels) | state.mse_history]
     learning_rate = update_learning_rate(mse_history, learning_rate)
 
@@ -177,6 +193,10 @@ defmodule ML.LinearRegression.Processor do
     end
   end
 
+  @doc """
+  Calculate slope of MSE with respect to weights
+  `(features * (features * weights) - label) / n`
+  """
   def gradient_descent(features, weights, labels, learning_rate) do
     current_guesses = Nx.dot(features, weights)
     differences = Nx.subtract(current_guesses, labels)
@@ -185,7 +205,7 @@ defmodule ML.LinearRegression.Processor do
       features
       |> Nx.transpose()
       |> Nx.dot(differences)
-      |> Nx.divide(Nx.shape(features) |> elem(0))
+      |> Nx.divide(features.shape |> elem(0))
 
     slopes
     |> Nx.multiply(learning_rate)
@@ -245,18 +265,16 @@ defmodule ML.LinearRegression.Processor do
     )
   end
 
-  def process_features(%State{} = state) do
+  def adjust_features(%State{} = state) do
     state
-    |> Map.update(:features, state.features, fn features ->
-      ones = Nx.broadcast(1, {Nx.shape(features) |> elem(0), 1})
+    |> Map.update(:features, state.features, &process_features/1)
+    |> Map.update(:test_features, state.test_features, &process_features/1)
+  end
 
-      Nx.concatenate([ones, features], axis: 1)
-    end)
-    |> Map.update(:test_features, state.test_features, fn test_features ->
-      ones = Nx.broadcast(1, {Nx.shape(test_features) |> elem(0), 1})
-
-      Nx.concatenate([ones, test_features], axis: 1)
-    end)
+  @spec process_features(Nx.t()) :: Nx.t()
+  def process_features(features) do
+    ones = Nx.broadcast(1, {Nx.shape(features) |> elem(0), 1})
+    Nx.concatenate([ones, features], axis: 1)
   end
 
   def set_weights(%State{features: features} = state) do
@@ -275,6 +293,17 @@ defmodule ML.LinearRegression.Processor do
 end
 
 # use
-# {:ok, _pid} = LRProcessor.start_link()
-# LRProcessor.load_cars_data()
-# LRProcessor.train()
+# {:ok, _pid} = LinearRegression.start_link()
+# LinearRegression.load_cars_data()
+# LinearRegression.train()
+# LinearRegression.test()
+
+# features = [
+#   [175, 8, 2.211, 400, 72],
+#   [120, 4, 1.4895, 120, 72],
+#   [82, 4, 1.36, 119, 82],
+#   [193, 8, 2.366, 304, 70],
+#   [48, 4, 1.0425, 90, 80]
+# ]
+
+# LinearRegression.predict(features)

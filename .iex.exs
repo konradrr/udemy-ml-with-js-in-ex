@@ -1,1 +1,1 @@
-alias ML.LinearRegression.Processor, as: LRProcessor
+alias ML.LinearRegression
