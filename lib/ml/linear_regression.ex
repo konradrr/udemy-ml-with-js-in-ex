@@ -6,34 +6,38 @@ defmodule ML.LinearRegression do
   require Logger
 
   defmodule State do
-    defstruct learning_rate: 0.1,
-              iterations: 100,
-              mse_history: [],
-              weights: nil,
+    defstruct batch_size: 100,
+              batch_quantity: nil,
               features: nil,
-              mean: nil,
-              std_dev: nil,
-              standardize_features: true,
+              iterations: 100,
               labels: nil,
-              test_size: 50,
+              learning_rate: 0.1,
+              mean: nil,
+              mse_history: [],
+              standardize_features: true,
+              std_dev: nil,
               test_features: nil,
               test_labels: nil,
-              training_iteration: nil
+              test_size: 50,
+              training_iteration: nil,
+              weights: nil
 
     @type t :: %State{
-            learning_rate: float,
-            iterations: integer,
-            mse_history: [float],
-            weights: Nx.t() | nil,
+            batch_size: integer,
+            batch_quantity: integer | nil,
             features: Nx.t() | nil,
-            mean: Nx.t() | nil,
-            std_dev: Nx.t() | nil,
-            standardize_features: boolean,
+            iterations: integer,
             labels: Nx.t() | nil,
-            test_size: integer,
+            learning_rate: float,
+            mean: Nx.t() | nil,
+            mse_history: [float],
+            standardize_features: boolean,
+            std_dev: Nx.t() | nil,
             test_features: Nx.t() | nil,
             test_labels: Nx.t() | nil,
-            training_iteration: integer | nil
+            test_size: integer,
+            training_iteration: integer | nil,
+            weights: Nx.t() | nil
           }
   end
 
@@ -47,8 +51,8 @@ defmodule ML.LinearRegression do
     GenServer.call(__MODULE__, :load_data)
   end
 
-  def train do
-    GenServer.cast(__MODULE__, :train)
+  def train(opts \\ []) do
+    GenServer.cast(__MODULE__, {:train, opts})
   end
 
   def test do
@@ -67,30 +71,9 @@ defmodule ML.LinearRegression do
   # Server
 
   @impl true
-  @spec init(keyword) :: {:ok, State.t()}
-  def init(opts \\ []) do
-    state =
-      %State{}
-      |> set_learning_rate(opts)
-      |> set_iterations(opts)
-      |> set_standardize_features(opts)
-
-    {:ok, state}
-  end
-
-  defp set_learning_rate(%State{} = state, opts) do
-    %State{state | learning_rate: Keyword.get(opts, :learning_rate, state.learning_rate)}
-  end
-
-  defp set_iterations(%State{} = state, opts) do
-    %State{state | iterations: Keyword.get(opts, :iterations, state.iterations)}
-  end
-
-  defp set_standardize_features(%State{} = state, opts) do
-    %State{
-      state
-      | standardize_features: Keyword.get(opts, :standardize_features, state.standardize_features)
-    }
+  @spec init([]) :: {:ok, State.t()}
+  def init(_init_args \\ []) do
+    {:ok, %State{}}
   end
 
   @impl true
@@ -149,8 +132,12 @@ defmodule ML.LinearRegression do
   end
 
   @impl true
-  def handle_cast(:train, %State{} = state) do
+  def handle_cast({:train, opts}, %State{} = state) do
     state
+    # |> set_learning_rate(opts)
+    |> set_iterations(opts)
+    |> set_standardize_features(opts)
+    |> set_batching(opts)
     |> Map.put(:training_iteration, 0)
     |> Map.put(:mse_history, [])
     |> Map.put(:learning_rate, %State{}.learning_rate)
@@ -170,7 +157,8 @@ defmodule ML.LinearRegression do
       training_iteration: training_iteration
     } = state
 
-    weights = gradient_descent(features, weights, labels, learning_rate)
+    weights = batch_gradient_descent(state, weights, 0)
+
     mse_history = [calculate_mse(features, weights, labels) | state.mse_history]
     learning_rate = update_learning_rate(mse_history, learning_rate)
 
@@ -191,6 +179,39 @@ defmodule ML.LinearRegression do
       send(self(), :training_iteration)
       {:noreply, state}
     end
+  end
+
+  def batch_gradient_descent(%State{} = state, new_weights, current_iteration)
+      when current_iteration < state.batch_quantity do
+    %{
+      batch_size: batch_size,
+      features: features,
+      labels: labels,
+      learning_rate: learning_rate
+    } = state
+
+    start_index = current_iteration * batch_size
+
+    features_slice =
+      Nx.slice(features, [start_index, 0], [batch_size, features.shape |> elem(1)])
+
+    labels_slice = Nx.slice(labels, [start_index, 0], [batch_size, labels.shape |> elem(1)])
+
+    updated_weights =
+      gradient_descent(
+        features_slice,
+        new_weights,
+        labels_slice,
+        learning_rate
+      )
+
+    # next_iteration = current_iteration + 1
+
+    batch_gradient_descent(state, updated_weights, current_iteration + 1)
+  end
+
+  def batch_gradient_descent(_state, weights, _current_iteration) do
+    weights
   end
 
   @doc """
@@ -244,7 +265,7 @@ defmodule ML.LinearRegression do
   end
 
   @doc """
-    Standardize `features`, `test_features` and set `mean` and `std_dev` when the `standardize_features` flag is set.
+    Standardize `features`, `test_features` and set `mean` and `std_dev`  current_iteration < iterations the `standardize_features` flag is set.
   """
   def maybe_standardize_features(%State{standardize_features: false} = state) do
     state
@@ -289,6 +310,37 @@ defmodule ML.LinearRegression do
     features
     |> Nx.subtract(mean)
     |> Nx.divide(std_dev)
+  end
+
+  defp set_iterations(%State{} = state, opts) do
+    %State{state | iterations: Keyword.get(opts, :iterations, state.iterations)}
+  end
+
+  defp set_standardize_features(%State{} = state, opts) do
+    %State{
+      state
+      | standardize_features: Keyword.get(opts, :standardize_features, state.standardize_features)
+    }
+  end
+
+  defp set_batching(%State{batch_size: batch_size} = state, opts) do
+    batch_size = Keyword.get(opts, :batch_size, batch_size)
+    examples_count = state.features.shape |> elem(0)
+
+    batch_size =
+      if batch_size > examples_count do
+        Logger.warning(
+          "batch_size exceeds examples count, setting it to the count #{examples_count}"
+        )
+
+        examples_count
+      else
+        batch_size
+      end
+
+    state
+    |> Map.put(:batch_size, batch_size)
+    |> Map.put(:batch_quantity, floor(elem(state.features.shape, 0) / batch_size))
   end
 end
 
