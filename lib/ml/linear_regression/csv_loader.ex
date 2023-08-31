@@ -11,13 +11,6 @@ defmodule ML.LinearRegression.CsvLoader do
   def load_cars_csv_file(test_size) do
     root_path = Path.expand(".")
     file_path = Path.join([root_path, "data", "cars.csv"])
-    # test_size = Keyword.get(opts, :test_size)
-
-    # columns_struct = [
-    #   {:none, :boolean},
-    #   {:label, :}
-
-    # ]
 
     if File.exists?(file_path) do
       {test_data, data} =
@@ -39,22 +32,20 @@ defmodule ML.LinearRegression.CsvLoader do
 
           {[
              parse_float(horsepower),
-             String.to_integer(cylinders),
+             parse_float(cylinders),
              parse_float(weight),
              parse_float(displacement),
-             String.to_integer(modelyear)
+             parse_float(modelyear)
            ], [parse_float(mpg)]}
-
-          # {[parse_float(horsepower)], [parse_float(mpg)]}
         end)
         |> Enum.to_list()
         |> Enum.shuffle()
         |> Enum.split(test_size)
 
-      features = data |> Enum.map(&elem(&1, 0))
-      labels = data |> Enum.map(&elem(&1, 1))
-      test_features = test_data |> Enum.map(&elem(&1, 0))
-      test_labels = test_data |> Enum.map(&elem(&1, 1))
+      features = Enum.map(data, &elem(&1, 0))
+      labels = Enum.map(data, &elem(&1, 1))
+      test_features = Enum.map(test_data, &elem(&1, 0))
+      test_labels = Enum.map(test_data, &elem(&1, 1))
 
       {:ok, {features, labels, test_features, test_labels}}
     else

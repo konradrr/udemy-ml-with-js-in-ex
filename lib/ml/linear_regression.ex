@@ -59,6 +59,10 @@ defmodule ML.LinearRegression do
     GenServer.call(__MODULE__, :test)
   end
 
+  def mse_chart do
+    GenServer.call(__MODULE__, :mse_chart)
+  end
+
   @doc """
   Predict MPG for the given features. It accepts a list of list of the following features:
   `[horsepower, cylinders, weight, displacement, modelyear]`
@@ -97,18 +101,22 @@ defmodule ML.LinearRegression do
   end
 
   def handle_call(:test, _from, %State{} = state) do
-    %{test_features: test_features, test_labels: test_labels, weights: weights} = state
+    %{
+      test_features: test_features,
+      test_labels: test_labels,
+      weights: weights
+    } = state
 
     predictions = Nx.dot(test_features, weights)
 
-    # SSres
+    # SS_res
     res =
       Nx.subtract(test_labels, predictions)
       |> Nx.pow(2)
       |> Nx.sum()
       |> Nx.to_number()
 
-    # SStot
+    # SS_tot
     tot =
       Nx.subtract(test_labels, Nx.mean(test_labels))
       |> Nx.pow(2)
@@ -131,12 +139,30 @@ defmodule ML.LinearRegression do
     |> then(&{:reply, &1, state})
   end
 
+  def handle_call(:mse_chart, _from, %State{mse_history: mse_history} = state) do
+    mse_history
+    |> Enum.reverse()
+    |> Enum.with_index()
+    |> Contex.Dataset.new(["mse", "x"])
+    |> Contex.PointPlot.new(mapping: %{x_col: "x", y_cols: ["mse"]})
+    |> then(&Contex.Plot.new(600, 400, &1))
+    |> Contex.Plot.titles(
+      "Mean Squared Error History",
+      "Batch size: #{state.batch_size}, iterations: #{state.iterations}"
+    )
+    |> Contex.Plot.axis_labels("Iteration", "Mean Squared Error")
+    |> Contex.Plot.to_svg()
+    |> then(
+      &File.write("./mse-history-b#{state.batch_size}-i#{state.iterations}.svg", elem(&1, 1))
+    )
+
+    {:reply, nil, state}
+  end
+
   @impl true
   def handle_cast({:train, opts}, %State{} = state) do
     state
-    # |> set_learning_rate(opts)
     |> set_iterations(opts)
-    |> set_standardize_features(opts)
     |> set_batching(opts)
     |> Map.put(:training_iteration, 0)
     |> Map.put(:mse_history, [])
@@ -205,8 +231,6 @@ defmodule ML.LinearRegression do
         learning_rate
       )
 
-    # next_iteration = current_iteration + 1
-
     batch_gradient_descent(state, updated_weights, current_iteration + 1)
   end
 
@@ -220,15 +244,15 @@ defmodule ML.LinearRegression do
   """
   def gradient_descent(features, weights, labels, learning_rate) do
     current_guesses = Nx.dot(features, weights)
-    differences = Nx.subtract(current_guesses, labels)
+    differences = Nx.subtract(labels, current_guesses)
 
-    slopes =
+    gradient_descent =
       features
       |> Nx.transpose()
       |> Nx.dot(differences)
-      |> Nx.divide(features.shape |> elem(0))
+      |> Nx.multiply(-1 / elem(features.shape, 0))
 
-    slopes
+    gradient_descent
     |> Nx.multiply(learning_rate)
     |> then(&Nx.subtract(weights, &1))
   end
@@ -293,8 +317,8 @@ defmodule ML.LinearRegression do
   end
 
   @spec process_features(Nx.t()) :: Nx.t()
-  def process_features(features) do
-    ones = Nx.broadcast(1, {Nx.shape(features) |> elem(0), 1})
+  defp process_features(features) do
+    ones = Nx.broadcast(1, {elem(Nx.shape(features), 0), 1})
     Nx.concatenate([ones, features], axis: 1)
   end
 
@@ -314,13 +338,6 @@ defmodule ML.LinearRegression do
 
   defp set_iterations(%State{} = state, opts) do
     %State{state | iterations: Keyword.get(opts, :iterations, state.iterations)}
-  end
-
-  defp set_standardize_features(%State{} = state, opts) do
-    %State{
-      state
-      | standardize_features: Keyword.get(opts, :standardize_features, state.standardize_features)
-    }
   end
 
   defp set_batching(%State{batch_size: batch_size} = state, opts) do
@@ -343,19 +360,3 @@ defmodule ML.LinearRegression do
     |> Map.put(:batch_quantity, floor(elem(state.features.shape, 0) / batch_size))
   end
 end
-
-# use
-# {:ok, _pid} = LinearRegression.start_link()
-# LinearRegression.load_cars_data()
-# LinearRegression.train()
-# LinearRegression.test()
-
-# features = [
-#   [175, 8, 2.211, 400, 72],
-#   [120, 4, 1.4895, 120, 72],
-#   [82, 4, 1.36, 119, 82],
-#   [193, 8, 2.366, 304, 70],
-#   [48, 4, 1.0425, 90, 80]
-# ]
-
-# LinearRegression.predict(features)
